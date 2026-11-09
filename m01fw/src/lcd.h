@@ -17,4 +17,3 @@ extern uint16_t lcd_w, lcd_h;
 uint32_t lcd_init(void);             /* returns ID from 0xD3 (expect 0x9341) */
 void lcd_set_rotation(uint8_t madctl);
 void lcd_fill(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t c);
-void lcd_text(uint16_t x, uint16_t y, const char *s, uint8_t scale, uint16_t fg, uint16_t bg);

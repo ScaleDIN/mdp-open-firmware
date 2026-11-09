@@ -1,7 +1,7 @@
 /* ILI9341 (Z280IT002 module) on FSMC bank 1 NE1, 16-bit 8080 bus, RS = A18. */
 #include "board.h"
 #include "lcd.h"
-#include "font8x8_basic.h"
+#include "gfx.h"
 
 #define LCD_CMD (*(volatile uint16_t *)0x6007FFFEu)   /* A18 = 0 */
 #define LCD_DAT (*(volatile uint16_t *)0x60080000u)   /* A18 = 1 */
@@ -108,22 +108,10 @@ void lcd_fill(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t c)
     for (uint32_t n = (uint32_t)w * h; n; n--) LCD_DAT = c;
 }
 
-/* font8x8_basic: row bytes, bit 0 = leftmost pixel */
-static void draw_char(uint16_t x, uint16_t y, char ch, uint8_t s, uint16_t fg, uint16_t bg)
-{
-    const uint8_t *g = (const uint8_t *)font8x8_basic[(uint8_t)ch & 0x7F];
-    set_window(x, y, x + 8 * s - 1, y + 8 * s - 1);
-    for (int row = 0; row < 8; row++)
-        for (int sy = 0; sy < s; sy++)
-            for (int col = 0; col < 8; col++) {
-                uint16_t c = (g[row] >> col) & 1 ? fg : bg;
-                for (int sx = 0; sx < s; sx++) LCD_DAT = c;
-            }
-}
+/* gfx.h backend */
+void gfx_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) { set_window(x0, y0, x1, y1); }
 
-void lcd_text(uint16_t x, uint16_t y, const char *s, uint8_t scale, uint16_t fg, uint16_t bg)
+void gfx_push(uint16_t c, uint32_t n)
 {
-    /* only whole characters that fit on screen */
-    for (; *s && x + 8u * scale <= lcd_w && y + 8u * scale <= lcd_h; s++, x += 8 * scale)
-        draw_char(x, y, *s, scale, fg, bg);
+    while (n--) LCD_DAT = c;
 }

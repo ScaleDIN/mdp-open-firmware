@@ -3,12 +3,14 @@
 #include "config.h"
 
 #define CONFIG_ADDR  0x08040000u   /* first 2 KB page above 256 KB, unused by stock */
-#define CONFIG_MAGIC 0x434C304Du   /* 'M0LC' */
+
+#define UI_MAGIC     0x3155304Du   /* 'M0U1' */
 
 bool config_load(link_cfg_t *c)
 {
     memcpy(c, (const void *)CONFIG_ADDR, sizeof *c);
-    return c->magic == CONFIG_MAGIC && c->channel <= 125;
+    if (c->ui_magic != UI_MAGIC) ui_defaults(&c->ui);
+    return c->magic == LINK_MAGIC && c->channel <= 125;
 }
 
 static void wait_bsy(void) { while (FLASH->SR & FLASH_SR_BSY) { } }
@@ -16,7 +18,7 @@ static void wait_bsy(void) { while (FLASH->SR & FLASH_SR_BSY) { } }
 bool config_save(const link_cfg_t *in)
 {
     link_cfg_t c = *in;
-    c.magic = CONFIG_MAGIC;
+    c.ui_magic = UI_MAGIC;
 
     if (FLASH->CR & FLASH_CR_LOCK) {
         FLASH->KEYR = 0x45670123u;
