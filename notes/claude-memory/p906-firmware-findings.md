@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: f2752340-1e00-4e4e-8977-598ba3c7fb12
-  modified: 2026-11-09T14:04:42.163Z
+  modified: 2026-11-09T14:25:22.983Z
 ---
 
 Findings from analysing the P906 bootloader dump and v3.01 firmware (2026-11):
@@ -16,6 +16,7 @@ Findings from analysing the P906 bootloader dump and v3.01 firmware (2026-11):
 
 - DFU not enumerating on the user's AMD/USB4 laptop: bootloader and app have identical USB descriptors and both use USB interrupts; clock is HSE×9 in both. Difference: the bootloader never configures the FUSB302 (app bit-bangs I2C to it). At reset the FUSB302 presents Rd on both CC pins = USB-C "debug accessory", which strict USB-C hosts mishandle. That hypothesis was tested on 2026-11-09: DFU still failed on what was probably a USB-A port, so it's likely wrong. Untested remaining suspect: insufficient 3.3 V rail in DFU when powered from the laptop port. The user chose to just use another PC for DFU updates. Never suggest barrel jack + USB-C together (the manual forbids powering both).
 
+- DFU .ERR on the user's other PC (even stock .hex; file hash/size verified, no extra files on drive): the bootloader starts parsing at disk 0x7A00 when data is written before the dir entry, but the file starts at 0x6A00, so parsing begins mid-line. tools/dfuhex.py makes sector-aligned files with a 4 KB ignorable lead-in (patched/*_dfu.hex). blsim passes; not yet tried on hardware.
 - Charger-compat patch built 2026-11-09: patched/MDP_P906_v3.01_pdfix.hex from tools/pdfix.py (CC fix, AUTO_RETRY, protocol replies, request sent from the ISR; cave at 0x0802D100). NOT yet flashed or tested on hardware.
 - Charger compatibility analysis: FUSB302 driver at 0x0802196C bit-bangs I2C. (1) Attach detect at 0x080219F8 `cmp r0,#2` requires BC_LVL≥2, so Rp ≥1.5 A; Default-USB Rp sources are never attached ("fusb3022 CC1 or CC2 error"), 3 tries at boot only. 1-byte fix: #2→#1. (2) Rx dispatcher 0x0801EBC0 only handles Accept, PS_RDY, Source_Caps, EPR_Mode, EPR_Source_Caps. Soft_Reset, Get_Sink_Cap, VDMs, Reject and Wait are ignored, so strict sources go to Hard Reset loops. Fixing that needs a code cave after 0x0802D0E8. (3) AUTO_CRC is off until the first Source_Caps arrives (Switches1=0x21/0x22, SPECREV=2.0), so the first caps are never acknowledged. (4) The Request is sent from the main loop (4 ms PD tick), so it may miss tSenderResponse. (5) PPS is preferred over fixed 20 V when the charger offers PPS up to ≥20 V. Control-message builder 0x0801E258 leaves the spec-revision bits at 0.
 

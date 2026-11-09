@@ -11,6 +11,7 @@ Notes, backups and tools from recovering a Miniware **MDP-P906** (board `P906-DI
 | `dump/p906_flash_1.bin`, `dump/p906_flash_2.bin` | Full 256 KB internal flash **before** the fix (two identical reads) |
 | `dump/p906_flash_after.bin` | Full 256 KB flash **after** the fix: bootloader + v3.01 + calibration. **Known-good image for this unit.** |
 | `patched/MDP_P906_v3.01_pdfix.hex` | USB-PD charger-compatibility patch, built by `tools/pdfix.py` (see below). **Untested on hardware.** |
+| `patched/*_dfu.hex` | The same images re-laid out for the DFU drive by `tools/dfuhex.py` (`_stock_dfu` = unmodified v3.01, `_pdfix_dfu` = PD patch). **Use these for DFU on current Windows.** DFU-only: other tools may reject the repeated filler records. |
 | `patched/MDP_P906_v3.01_pd28v.hex` | Experimental 28 V USB-PD patch. **Not flashed and not recommended** (see below). |
 | `tools/` | Python analysis scripts (capstone-based disassembly, dump analysis, hex patch + verify) |
 | `notes/claude-memory/` | Condensed findings kept as project memory |
@@ -89,4 +90,15 @@ Not changed: the first Source_Capabilities after boot still gets no GoodCRC, bec
 Flash it over SWD as in the recovery section. The `.hex` erases only app pages, and calibration at `0x0803D000` is untouched:
 `STM32_Programmer_CLI -c port=SWD mode=UR reset=HWrst -d patched/MDP_P906_v3.01_pdfix.hex -v`
 To undo it, flash the stock `MDP_P906_v3.01.hex` (or `dump/p906_flash_after.bin` at `0x08000000`).
+
+## DFU `.ERR` on current Windows, and the `_dfu.hex` files
+
+The bootloader doesn't read the copied file. It parses the raw sector writes to its virtual drive. If it sees the `.HEX` directory entry first, it parses from the file's first sector (disk offset `0x6A00`). If the data arrives before the directory entry, it ignores writes below `0x7A00` and starts parsing there. That is 4 KB into a file starting at `0x6A00`, usually mid-line, so the result is `.ERR`. Current Windows writes data first, so even the stock `.hex` fails.
+
+`tools/dfuhex.py in.hex out.hex` lays the file out so it doesn't matter:
+- Every 512-byte sector starts exactly on a `:`.
+- The first 4 KB holds only records the bootloader ignores.
+- Data records are at most 16 bytes, with even addresses and lengths.
+
+`tools/blsim.py` confirms that both `_dfu.hex` files give `.rdy` with the correct flash contents whether parsing starts at the beginning or 1–8 sectors in. The original `.hex` fails when parsing starts 8 sectors in.
 
