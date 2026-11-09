@@ -29,7 +29,7 @@ Key A switches the output on every page. The strip on the right edge shows what 
 
 The menu sets the VALUE wheel direction and whether edits apply live. With **Apply edits: CONFIRM**, a changed voltage or current waits on screen until you press B (APPLY) or C (CANCEL).
 
-Showing the USB-PD contract and adaptor power needs the P906 patch built by `tools/pdfix.py`. Without it the rest of the firmware still works.
+Showing the USB-PD contract and adaptor power needs the patched P906 firmware `patched/MDP_P906_v3.01_pdinfo_dfu.hex`. Without it the rest of the firmware still works.
 
 ## Build and flash
 
