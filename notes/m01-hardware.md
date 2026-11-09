@@ -74,6 +74,7 @@ Verified with our firmware (2026-11-09):
 - The M01 sends type 5 `'M'` and the P906 replies with its 4-byte ID (this unit: `0B 3D C1 C1`). The M01 then sends type 6 `addr[5] (register order) + channel`, and the P906 replies type 6 `"OK" 02`. Afterwards it answers on the new address immediately, with the address bytes in the same order as sent.
 - Stock M01 v1.34 stores the ID at 0x0803C000 as one byte per u16 (`0b00 3d00 c100 c100`).
 - Our firmware saves `{magic 'M0LC', addr[5], ch, id[4]}` at 0x08040000.
+- Input source info (patched P906 only, version 3.01PD2, `tools/pdfix.py`): type 0x0D with `id[4]`. The 12-byte reply is version 1, PD state, tx queue state, contract type (1 fixed, 2 PPS), request sent, PDO count, contract mV, mA, adaptor max fixed-PDO W (u16 LE). PDO count 0 means no PD source: barrel jack or non-PD USB-C, which the board can't tell apart.
 - Status poll = type 7 with `id[4], slot 0, blink 1`. The reply is 0x1C bytes: err, lock, temp BCD (35.5 °C), state, input V BCD (20.056 V), input I BCD (0.110 A), 4 raw ADC V/I pairs, set V BCD, set I BCD.
 
 ## Plan for replacement firmware

@@ -14,6 +14,14 @@ Patches (see notes in README):
      clears InterruptA/B so a latched RETRYFAIL can't hold INT_N low.
   5. Main-loop PD tick runs with the FUSB302 EXTI (IRQ40) masked, so the
      interrupt can't break a bit-banged I2C transfer in progress.
+  6. New radio request type 0x0D (id[4]) -> reply with the PD contract and the
+     adaptor's maximum power, for the open M01 firmware. The stock status reply
+     is untouched, so a stock M01 keeps working. Reply payload (LE):
+       0 version(1)  1 PD state  2 tx queue state (0 = settled)
+       3 contract type (1 fixed, 2 PPS)  4 request sent  5 source PDO count
+       6 contract mV (u16)  8 contract mA (u16)  10 max fixed-PDO power, W (u16)
+     The board cannot sense the barrel jack: PDO count 0 means "no PD source",
+     which is the barrel jack or a USB-C source that does not speak PD.
 New code lives in unused flash at 0x0802D100 (app ends at 0x0802D0E8,
 calibration starts at 0x0803D000).
 """
@@ -32,6 +40,16 @@ ST        = 0x200051C4   # +0 type,+4 mV,+8 mA (last request) +0x18 msgID +0x1c 
 TXQ       = 0x200052B4   # +0 tx pending,+4 time,+8 def type,+0xc def mV,+0x10 def mA
 NOW_MS    = 0x200053B8   # 1 ms counter (wraps at 1,000,000)
 NVIC      = 0xE000E100
+CAPS      = 0x20004D7C   # parsed Source_Caps: +4 max fixed PDO power (W), +0xC4 u16 PDO count
+RADIO     = 0x20000F90   # +0 pending reply type, +1 send flag, +0x44 device id source
+RADIO_TX  = 0x2000520C   # 32-byte reply frame
+RADIO_BSY = 0x20005296   # 0 = reply may be sent
+XOR8      = 0x0801634C   # frame checksum(buf, len), seed 0x88
+MEMSET    = 0x08015070   # memset(buf, len, val)
+GET_ID    = 0x08016410   # get_id(src, out[4])
+PARSE_END = 0x08016AB4   # parser epilogue, r0 = return value (1 = bad packet)
+PARSE_T9  = 0x08016A12   # parser: type 9 body
+T_PDINFO  = 0x0D
 
 # ---- tiny Thumb assembler ---------------------------------------------------
 R = {f'r{i}': i for i in range(13)}; R.update(sp=13, lr=14, pc=15)
@@ -58,7 +76,7 @@ class Asm:
         for op, a in s.items:
             if op == 'label': s.labels[a] = pc
             pc += s.size(op, a)
-        if pc & 2: s.items.append(('nop', ())); pc += 2
+        if s.lits and pc & 2: s.items.append(('nop', ())); pc += 2
         litaddr = {}
         for v in s.lits: litaddr[v] = pc; pc += 4
         # pass 2: encode
@@ -117,7 +135,6 @@ class Asm:
             else: raise ValueError(op)
             pc += s.size(op, a)
         if len(out) + s.org != pc: raise AssertionError('size mismatch')
-        if pc & 2: h(0xBF00)
         for v in s.lits: out.extend(v.to_bytes(4, 'little'))
         return bytes(out)
 
@@ -271,8 +288,50 @@ a.adds('r3', 1); a.lsls('r3', 'r3', 29); a.lsrs('r3', 'r3', 29)
 a.strb('r3', 'r2', 0x18)
 a.bx_lr()
 
+# radio parser fallthrough: r4 = rx frame, r0 = type, r5/r6 free, sp+0x14 = 4 free bytes
+a.L('rx_type')
+a.cmp('r0', 9); a.bc('ne', 'rx_t')
+a.bw(PARSE_T9)
+a.L('rx_t')
+a.cmp('r0', T_PDINFO); a.bc('eq', 'rx_pd')
+a.bw(PARSE_END)                     # unknown type: same as stock (r0 = type)
+a.L('rx_pd')
+a.ldrb('r1', 'r4', 1); a.cmp('r1', 4); a.bc('ne', 'rx_bad')
+a.adds('r1', 2); a.mov('r0', 'r4'); a.bl(XOR8)
+a.ldrb('r2', 'r4', 1); a.adds_r('r1', 'r4', 'r2'); a.ldrb('r1', 'r1', 2)
+a.cmp('r0', 'r1'); a.bc('ne', 'rx_bad')
+a.ldr_lit('r5', RADIO)
+a.ldr('r0', 'r5', 0x44); a.add_sp('r1', 0x14); a.bl(GET_ID)
+a.add_sp('r1', 0x14)
+for i in range(4):
+    a.ldrb('r2', 'r1', i); a.ldrb('r3', 'r4', 2 + i); a.cmp('r2', 'r3'); a.bc('ne', 'rx_bad')
+a.ldr_lit('r6', RADIO_TX)
+a.mov('r0', 'r6'); a.movs('r1', 32); a.movs('r2', 0); a.bl(MEMSET)
+a.movs('r0', T_PDINFO); a.strb('r0', 'r6', 0)
+a.movs('r0', 12); a.strb('r0', 'r6', 1)
+a.movs('r0', 1); a.strb('r0', 'r6', 2)               # version
+a.ldr_lit('r2', ST)
+a.ldrb('r0', 'r2', 0x1C); a.strb('r0', 'r6', 3)      # PD state
+a.ldr_lit('r1', TXQ); a.ldrb('r0', 'r1', 0); a.strb('r0', 'r6', 4)
+a.ldrb('r0', 'r2', 0); a.strb('r0', 'r6', 5)         # contract type
+a.ldrb('r0', 'r2', 1); a.strb('r0', 'r6', 6)         # request sent
+a.ldr('r0', 'r2', 4); a.strh('r0', 'r6', 8)          # contract mV
+a.ldr('r0', 'r2', 8); a.strh('r0', 'r6', 10)         # contract mA
+a.ldr_lit('r1', CAPS)
+a.ldr('r0', 'r1', 4); a.strh('r0', 'r6', 12)         # max power, W
+a.adds('r1', 0xC4); a.ldrh('r0', 'r1', 0); a.strb('r0', 'r6', 7)   # PDO count
+a.mov('r0', 'r6'); a.movs('r1', 14); a.bl(XOR8)
+a.strb('r0', 'r6', 14)
+a.movs('r0', T_PDINFO); a.strb('r0', 'r5', 0)        # generic builder then skips it
+a.movs('r0', 1); a.strb('r0', 'r5', 1)               # send flag
+a.ldr_lit('r1', RADIO_BSY); a.movs('r0', 0); a.strb('r0', 'r1', 0)
+a.bw(PARSE_END)                     # r0 = 0: ok
+a.L('rx_bad')
+a.movs('r0', 1); a.bw(PARSE_END)
+
 # resolve literal placeholders: Asm.lit isn't used inline; register literals used above
-for v in (NVIC + 0x84, NVIC + 0x04, 24000, ST, TXQ, NOW_MS, 999000, 0x1001912C, 0x000641F4):
+for v in (NVIC + 0x84, NVIC + 0x04, 24000, ST, TXQ, NOW_MS, 999000, 0x1001912C, 0x000641F4,
+          RADIO, RADIO_TX, RADIO_BSY, CAPS):
     a.lit(v)
 code = a.build()
 L = a.labels
@@ -286,7 +345,41 @@ PATCHES = [
     (0x0801EC7E, 'fff79fff', thumb_bl(0x0801EC7E, L['disp']).hex(), 'rx dispatcher -> cave'),
     (0x08021966, 'fdf77bb9', thumb_bl(0x08021966, L['isr'], link=False).hex(), 'EXTI body -> cave'),
     (0x0801EE94, 'c9ed0108', (L['tick'] | 1).to_bytes(4, 'little').hex(), 'PD tick pointer -> cave'),
+    # faster negotiation
+    (0x08021A42, '2221', '2621', 'Switches1 CC2: AUTO_CRC on from init (was after 1st caps)'),
+    (0x08021A80, '2121', '2521', 'Switches1 CC1: AUTO_CRC on from init'),
+    (0x0801EC2E, '04d0', '00bf', 'accept the first Source_Caps (state 0 -> 2)'),
+    (0x0801ECD0, '41f28830', '44f62060', 'first request 20 V instead of 5 V'),
+    # prefer a fixed PDO over PPS / AVS (PDO picker at 0x0801E33A): skip the
+    # APDO when a fixed PDO already matches the target voltage exactly
+    (0x0801E384, 'b542', 'a642', 'AVS: cmp best, target (was cmp max, best)'),
+    (0x0801E386, '0bd3', '0bd0', 'AVS: skip if best == target'),
+    (0x0801E3DA, 'b542', 'a642', 'PPS: cmp best, target (was cmp max, best)'),
+    (0x0801E3DC, 'e0d3', 'e0d0', 'PPS: skip if best == target'),
+    # after PS_RDY, go to the PPS keep-alive state only if the contract is PPS
+    (0x0801ED02, '0178', '2178', 'state 3: test last request type, not "source has PPS"'),
+    (0x0801ED3C, '80b240f6b83188423edb28466084a26861680220fff767fb36e0',
+     None, 'state 8: re-request every ~2 s only when the contract is PPS'),
+    # version shown on the device info screen
+    (0x08019D7C, b'3.01\0\0\0\0'.hex(), b'3.01PD2\0'.hex(), 'version string "3.01" -> "3.01PD2"'),
+    # radio parser: `cmp r0,#9; bne end` -> cave, which handles both
+    (0x08016A0E, '092850d1', thumb_bl(0x08016A0E, L['rx_type'], link=False).hex(),
+     'radio parser: new request type 0x0D -> cave'),
 ]
+
+# state 8 (PPS keep-alive) rewritten in place, same 26 bytes:
+#   if (counter >= 2048 ms && last request was PPS) { counter = 0; re-request }
+k = Asm(0x0801ED3C)
+k.lsrs('r1', 'r0', 11); k.bc('eq', 0x0801EDC4)
+k.ldrb('r1', 'r4', 0); k.cmp('r1', 2); k.bc('ne', 0x0801EDC4)
+k.strh('r5', 'r4', 0x22)               # r5 == 0 here
+k.ldr('r2', 'r4', 8); k.ldr('r1', 'r4', 4); k.movs('r0', 2)
+k.bl(0x0801E422)
+k.b(0x0801EDC4)
+k.b(0x0801EDC4)                         # pad (unreachable)
+kcode = k.build()
+PATCHES = [(a, o, kcode.hex() if n is None else n, w) for a, o, n, w in PATCHES]
+assert len(kcode) == 26
 
 def main(src, dst):
     ih = IntelHex(src)
@@ -312,8 +405,8 @@ def main(src, dst):
         f.write(('\r\n'.join(lines) + '\r\n').encode())
     md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
     names = {v: k for k, v in L.items()}
-    for addr, *_ in PATCHES[:4]:
-        b = bytes(ih[addr + i] for i in range(4))
+    for addr, old, *_ in PATCHES:
+        b = bytes(ih[addr + i] for i in range(max(4, len(old) // 2)))
         print('  ', *(f'{i.address:#x}: {i.mnemonic} {i.op_str}' for i in md.disasm(b, addr, count=1)))
     if '-v' in sys.argv:
         for i in md.disasm(code, CAVE):
