@@ -202,9 +202,24 @@ int main(void)
                 else if (c.kind == UC_SET_I) mdp_set_mA(req, cfg.id, 0, c.value);
                 else                         mdp_output(req, cfg.id, 0, c.kind == UC_OUT_ON);
                 mdp_status_t st;
-                bool ok = status_req(req, &st);
-                if (have_cmd) { ui_cmd_done(&c, ok, now); if (ok) dbg.cmds_ok++; else dbg.cmds_fail++; }
-                if (ok) {
+                bool ok = false, out_sent = false;
+                if (have_cmd && (c.kind == UC_OUT_ON || c.kind == UC_OUT_OFF)) {
+                    /* The P906 builds no reply for this command: it re-sends its last
+                     * frame, whatever that was. Only delivery counts; the next status
+                     * poll confirms the switch. */
+                    uint8_t resp[32];
+                    out_sent = mdp_exchange(req, 7, resp, 30) != XCH_NOACK;
+                } else {
+                    ok = status_req(req, &st);
+                }
+                if (have_cmd) {
+                    bool done = ok || out_sent;
+                    ui_cmd_done(&c, done, now);
+                    if (done) dbg.cmds_ok++; else dbg.cmds_fail++;
+                }
+                if (out_sent) {
+                    fails = 0;
+                } else if (ok) {
                     fails = 0;
                     dbg.polls_ok++;
                     dbg.st = st;

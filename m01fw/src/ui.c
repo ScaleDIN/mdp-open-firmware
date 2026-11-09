@@ -62,7 +62,9 @@ static uint32_t out_cmd_ms;
 static bool pair_req;
 static int v_tries, i_tries;      /* sends of the current edit */
 static bool pend_v, pend_i;       /* confirm mode: edited, waiting for APPLY / CANCEL */
-static bool verify_set;          /* a set was sent: poll next, only polls report setpoints */
+static int out_tries;             /* sends of the current output on/off */
+static bool out_delivered;        /* the last of those reached the P906 */
+static bool verify_set;         /* a set was sent: poll next, only polls report setpoints */
 
 /* session counters (since last reset), accumulated while the output is on */
 static uint64_t sess_mAms, sess_mWms;
@@ -202,7 +204,7 @@ void ui_input(uint8_t keys, int dmenu, int dvalue, uint32_t now)
 {
     if (keys && set.key_click) beep(8);
     if (keys & 1) {                                   /* A: output, everywhere */
-        if (have_st && want_out < 0) { want_out = st.state ? 0 : 1; out_cmd_ms = 0; }
+        if (have_st && want_out < 0) { want_out = st.state ? 0 : 1; out_cmd_ms = 0; out_tries = 0; }
     }
     switch (scr) {
     case SCR_MAIN:
@@ -273,6 +275,10 @@ void ui_input(uint8_t keys, int dmenu, int dvalue, uint32_t now)
 bool ui_next_cmd(ui_cmd_t *c, uint32_t now)
 {
     if (pair_req) { pair_req = false; c->kind = UC_PAIR; c->value = 0; return true; }
+    if (want_out >= 0 && now - out_cmd_ms > 400 && out_tries >= 5) {   /* status never changed */
+        want_out = -1;
+        show_toast(out_delivered ? "P906 DID NOT SWITCH OUTPUT" : "NO REPLY FROM P906", C_BAD, now, 2000);
+    }
     if (want_out >= 0 && now - out_cmd_ms > 400) {
         c->kind = want_out ? UC_OUT_ON : UC_OUT_OFF; c->value = 0;
         return true;
@@ -291,7 +297,8 @@ void ui_cmd_done(const ui_cmd_t *c, bool ok, uint32_t now)
 {
     if (c->kind == UC_OUT_ON || c->kind == UC_OUT_OFF) {
         out_cmd_ms = now;
-        if (!ok) show_toast("NO REPLY FROM P906", C_BAD, now, 1500);
+        out_tries++;
+        out_delivered = ok;
     }
     if ((c->kind == UC_SET_V || c->kind == UC_SET_I) && ok) verify_set = true;
     if (c->kind == UC_SET_V && ++v_tries > 8) { edit_v = false; show_toast("P906 DID NOT ACCEPT VOLTAGE", C_BAD, now, 2000); }
