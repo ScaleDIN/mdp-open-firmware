@@ -1,0 +1,9 @@
+*.hex -text
+*.bin binary
+*.ADR -text
+*.CFG -text
+*.PRM -text
+*.TXT -text
+*.zip binary
+*.jpg binary
+*.jpeg binary
