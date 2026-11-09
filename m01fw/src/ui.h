@@ -14,6 +14,10 @@ typedef struct {
     uint8_t muted;            /* master: silences every beep */
     uint8_t beep_cc;          /* beep when the output enters current limit */
     uint8_t key_click;
+    uint8_t pad;              /* old flash pages: unknown; don't reuse */
+    /* added later: old pages read 0xFF here, ui_init maps anything but 0/1 to 0 */
+    uint8_t wheel_up_inc;     /* value wheel rolled up (towards the rear) increases */
+    uint8_t confirm_set;      /* wheel edits of V/I wait for APPLY */
 } ui_settings_t;
 
 bool ui_sound_on(void);       /* for beeps outside the UI (boot, pairing) */

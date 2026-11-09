@@ -167,5 +167,37 @@ int main(void)
         printf("set test accept=%d: sends=%d polls=%d\n", accept, sends, polls);
         if (sends != (accept ? 1 : 9)) { printf("FAIL\n"); return 1; }
     }
+
+    /* new settings: flip the wheel, confirm mode */
+    ui_input(16, 0, 0, now);               /* menu */
+    ui_input(0, 3, 0, now); ui_input(2, 0, 0, now);   /* Wheel up -> + */
+    ui_input(0, 1, 0, now); ui_input(2, 0, 0, now);   /* Apply edits -> CONFIRM */
+    ui_redraw(); ui_draw(now);
+    shot("7b_menu_options");
+    ui_input(16, 0, 0, now);               /* back to main */
+    st.state = 2; st.has_set = true; st.set_mV = 5000; st.set_mA = 500;
+    now += 3000; ui_status(&st, true, 5000, 200, now);
+    ui_draw(now);
+    shot("2a_main_arrows");
+
+    #define RUN(n, sends_out, asked_out) do { for (int t_ = 0; t_ < (n); t_++) { ui_cmd_t c_; now += 100; \
+        if (ui_next_cmd(&c_, now)) { (sends_out)++; (asked_out) = c_.value; ui_cmd_done(&c_, true, now); \
+            st.set_mV = c_.kind == UC_SET_V ? c_.value : st.set_mV; st.set_mA = c_.kind == UC_SET_I ? c_.value : st.set_mA; } \
+        ui_status(&st, true, 5000, 200, now); } } while (0)
+
+    uint32_t asked = 0; int sends = 0;
+    ui_input(0, 0, 1, now);                /* +1 detent = rolled down: decreases when flipped */
+    RUN(20, sends, asked);
+    ui_draw(now);
+    shot("2b_main_pending");
+    if (sends) { printf("FAIL: sent while pending\n"); return 1; }
+    ui_input(4, 0, 0, now);                /* CANCEL */
+    RUN(20, sends, asked);
+    if (sends || st.set_mV != 5000) { printf("FAIL: cancel\n"); return 1; }
+    ui_input(0, 0, 1, now);
+    ui_input(2, 0, 0, now);                /* APPLY */
+    RUN(20, sends, asked);
+    printf("confirm test: sends=%d asked=%lu set=%lu\n", sends, (unsigned long)asked, (unsigned long)st.set_mV);
+    if (sends != 1 || asked >= 5000 || st.set_mV != asked) { printf("FAIL: apply\n"); return 1; }
     return 0;
 }
