@@ -58,7 +58,7 @@ class Asm:
         for op, a in s.items:
             if op == 'label': s.labels[a] = pc
             pc += s.size(op, a)
-        if pc & 2: s.items.append(('nop', ())); pc += 2
+        if s.lits and pc & 2: s.items.append(('nop', ())); pc += 2
         litaddr = {}
         for v in s.lits: litaddr[v] = pc; pc += 4
         # pass 2: encode
@@ -117,7 +117,6 @@ class Asm:
             else: raise ValueError(op)
             pc += s.size(op, a)
         if len(out) + s.org != pc: raise AssertionError('size mismatch')
-        if pc & 2: h(0xBF00)
         for v in s.lits: out.extend(v.to_bytes(4, 'little'))
         return bytes(out)
 
@@ -291,7 +290,33 @@ PATCHES = [
     (0x08021A80, '2121', '2521', 'Switches1 CC1: AUTO_CRC on from init'),
     (0x0801EC2E, '04d0', '00bf', 'accept the first Source_Caps (state 0 -> 2)'),
     (0x0801ECD0, '41f28830', '44f62060', 'first request 20 V instead of 5 V'),
+    # prefer a fixed PDO over PPS / AVS (PDO picker at 0x0801E33A): skip the
+    # APDO when a fixed PDO already matches the target voltage exactly
+    (0x0801E384, 'b542', 'a642', 'AVS: cmp best, target (was cmp max, best)'),
+    (0x0801E386, '0bd3', '0bd0', 'AVS: skip if best == target'),
+    (0x0801E3DA, 'b542', 'a642', 'PPS: cmp best, target (was cmp max, best)'),
+    (0x0801E3DC, 'e0d3', 'e0d0', 'PPS: skip if best == target'),
+    # after PS_RDY, go to the PPS keep-alive state only if the contract is PPS
+    (0x0801ED02, '0178', '2178', 'state 3: test last request type, not "source has PPS"'),
+    (0x0801ED3C, '80b240f6b83188423edb28466084a26861680220fff767fb36e0',
+     None, 'state 8: re-request every ~2 s only when the contract is PPS'),
+    # version shown on the device info screen
+    (0x08019D7C, b'3.01\0\0\0\0'.hex(), b'3.01PD\0\0'.hex(), 'version string "3.01" -> "3.01PD"'),
 ]
+
+# state 8 (PPS keep-alive) rewritten in place, same 26 bytes:
+#   if (counter >= 2048 ms && last request was PPS) { counter = 0; re-request }
+k = Asm(0x0801ED3C)
+k.lsrs('r1', 'r0', 11); k.bc('eq', 0x0801EDC4)
+k.ldrb('r1', 'r4', 0); k.cmp('r1', 2); k.bc('ne', 0x0801EDC4)
+k.strh('r5', 'r4', 0x22)               # r5 == 0 here
+k.ldr('r2', 'r4', 8); k.ldr('r1', 'r4', 4); k.movs('r0', 2)
+k.bl(0x0801E422)
+k.b(0x0801EDC4)
+k.b(0x0801EDC4)                         # pad (unreachable)
+kcode = k.build()
+PATCHES = [(a, o, kcode.hex() if n is None else n, w) for a, o, n, w in PATCHES]
+assert len(kcode) == 26
 
 def main(src, dst):
     ih = IntelHex(src)
