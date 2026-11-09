@@ -8,6 +8,10 @@ Notes, backups and tools from recovering a Miniware **MDP-P906** (board `P906-DI
 |---|---|
 | `backup/` | Files from the P906's `P906_APP` drive before it was formatted (`*.CFG`/`*.PRM` calibration/config, `Q_SET.TXT`, `RX_ADDR.TXT`) |
 | `patched/M01_open_firmware.hex` | Compiled open M01 firmware from `m01fw/`. Flash over SWD; not tried through the M01's DFU bootloader. |
+| `patched/MDP_P906_v3.01_pdinfo.hex` | Current P906 patch, built by `tools/pdfix.py`: USB-PD charger compatibility plus reporting the PD contract to the M01. |
+| `patched/MDP_P906_v3.01_pdfix.hex` | Earlier build with the USB-PD compatibility changes only. |
+| `patched/*_dfu.hex` | The same images re-laid out for the DFU drive by `tools/dfuhex.py`. **Use these for DFU on current Windows.** DFU-only: other tools may reject the repeated filler records. |
+| `patched/MDP_P906_v3.01_pd28v.hex` | Experimental 28 V USB-PD patch. **Not flashed and not recommended** (see below). |
 | `tools/` | Python analysis scripts (capstone-based disassembly, dump analysis, hex patch + verify) |
 | `notes/claude-memory/` | Condensed findings kept as project memory |
 | `photos/` | Board photos (P906 MCU area, USB-C input area, P906 DC/DC board, M01 mainboard V1.3) |
@@ -15,7 +19,7 @@ Notes, backups and tools from recovering a Miniware **MDP-P906** (board `P906-DI
 
 Not included: the MDP PC software (`MDPUpperV1.2.zip`, 135 MB) and the STM32CubeProgrammer installer. Both are too large for GitHub and come from their vendors.
 
-Miniware's firmware is **not redistributed here**: no stock packages, flash dumps or patched P906 images. Download the stock `MDP_P906_v3.01.hex` from Miniware, then build the patched images yourself with `tools/pdfix.py` and `tools/dfuhex.py`, described below.
+The stock Miniware packages and this unit's flash dumps are **not included**. Download the stock `MDP_P906_v3.01.hex` from Miniware if you want to rebuild the patched images or go back to stock. The files in `patched/` are modified Miniware firmware and are not covered by any licence for this repo. Flash them at your own risk.
 
 ## Open M01 firmware
 
@@ -69,9 +73,9 @@ The DFU drive is a FAT12 disk emulated in RAM. Pre-filled dummy entries take clu
 - **USB-PD**: understands fixed, PPS and EPR (AVS) offers. It requests 5 V, then the highest voltage up to **20 V**. It enters EPR mode but still requests 20 V (`0x0801ED92: movw r0, #20000`).
 - **Input current limit**: a DAC-driven hardware limiter set to the negotiated PD current, minus a small margin. "Unlimit" means "the charger's advertised current", not truly unlimited. Anything above **3 A needs a 5 A e-marked cable**. Confirmed: MAX 5.00 A with a strong charger and a good cable, so 100 W in.
 - **Current Limit Mode** (Normal / Unlimit) only toggles GPIO **PE5**.
-- **28 V patch** (not included): a one-instruction change, 20000 → 28000 mV. **Not flashed.** The USB-C input switch is an **AON7409** (−30 V VDS, ±25 V VGS). That leaves too little margin at 28 V, and the gate may see the full input voltage. The K34 diode is a 40 V Schottky and isn't the issue. Treat **20 V × 5 A** as the USB-C ceiling, and use the 30 V barrel jack for more power.
+- **28 V patch** (`patched/`): a one-instruction change, 20000 → 28000 mV. **Not flashed.** The USB-C input switch is an **AON7409** (−30 V VDS, ±25 V VGS). That leaves too little margin at 28 V, and the gate may see the full input voltage. The K34 diode is a 40 V Schottky and isn't the issue. Treat **20 V × 5 A** as the USB-C ceiling, and use the 30 V barrel jack for more power.
 
-## USB-PD charger compatibility patch
+## USB-PD charger compatibility patch (`patched/MDP_P906_v3.01_pdfix.hex`)
 
 Some USB-C chargers never trigger 20 V on stock v3.01. There are two main causes:
 
@@ -100,7 +104,7 @@ Smaller issues: the FUSB302 never retries a transmission (`Control3 = 0x06`). Th
 Not changed: Hard_Reset is still not detected; a Hard_Reset drops VBUS, so the unit reboots anyway.
 
 Flash it over SWD as in the recovery section. The `.hex` erases only app pages, and calibration at `0x0803D000` is untouched:
-`STM32_Programmer_CLI -c port=SWD mode=UR reset=HWrst -d out.hex -v`
+`STM32_Programmer_CLI -c port=SWD mode=UR reset=HWrst -d patched/MDP_P906_v3.01_pdfix.hex -v`
 To undo it, flash the stock `MDP_P906_v3.01.hex`.
 
 ## DFU `.ERR` on current Windows, and the `_dfu.hex` files
