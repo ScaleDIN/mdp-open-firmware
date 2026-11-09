@@ -1,0 +1,17 @@
+set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_SYSTEM_PROCESSOR arm)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+# Default install location of the Arm GNU Toolchain on Windows (winget Arm.ArmGnuToolchain).
+if(NOT ARM_GCC_DIR)
+  file(GLOB _cands "C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/*/bin")
+  list(GET _cands -1 ARM_GCC_DIR)
+endif()
+set(_ext "")
+if(CMAKE_HOST_WIN32)
+  set(_ext ".exe")
+endif()
+set(CMAKE_C_COMPILER   "${ARM_GCC_DIR}/arm-none-eabi-gcc${_ext}")
+set(CMAKE_ASM_COMPILER "${ARM_GCC_DIR}/arm-none-eabi-gcc${_ext}")
+set(CMAKE_OBJCOPY      "${ARM_GCC_DIR}/arm-none-eabi-objcopy${_ext}")
+set(CMAKE_SIZE         "${ARM_GCC_DIR}/arm-none-eabi-size${_ext}")
