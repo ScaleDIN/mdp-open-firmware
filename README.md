@@ -85,9 +85,15 @@ Smaller issues: the FUSB302 never retries a transmission (`Control3 = 0x06`). Th
 | `0x0801EC7E` | Receive dispatcher hooked to new code. It answers **Soft_Reset** (Accept, reset MessageID, renegotiate) and **Get_Sink_Cap** (5 V 3 A + 20 V 5 A). It sends **Reject** for swaps. For Get_Source_Cap, Data_Reset, PD 3 requests and VDM requests it sends **Not_Supported** (on PD 2.0 sources: Reject, or nothing for unknown and VDM messages). After **Wait** it retries the same request after ~150 ms. After **Reject** it clears the stuck "request pending" flag. Everything else goes to the original handler. |
 | `0x08021966` | FUSB302 EXTI hooked: the Request is sent straight from the interrupt about 1 ms after Source_Capabilities, and `InterruptA`/`InterruptB` are cleared |
 | `0x0801EE94` | The main-loop PD tick runs with EXTI15_10 (IRQ40) masked, so the interrupt can't break a bit-banged I2C transfer |
+| `0x08021A42`, `0x08021A80` | FUSB302 `Switches1`: AUTO_CRC on from init, so the charger's first Source_Capabilities gets a GoodCRC (stock turned it on only after the first offer, forcing a resend) |
+| `0x0801EC2E` | The first Source_Capabilities is used straight away (stock ignored it in state 0) |
+| `0x0801ECD0` | First request is 20 V instead of 5 V then 20 V, one voltage change instead of two |
+| `0x0801E384`, `0x0801E3DA` | PDO picker prefers a fixed PDO: PPS/AVS is only used when no fixed PDO matches the target voltage (stock chose PPS at 20 V whenever a charger offered PPS up to ≥ 20 V) |
+| `0x0801ED02`, `0x0801ED3C` | The 3 s PPS keep-alive re-request only runs when the contract really is PPS (stock re-sent a PPS request even after picking fixed 20 V, which switched the contract to PPS) |
+| `0x08019D7C` | Version string `3.01` → `3.01PD`, so patched firmware is recognisable on the info screen |
 | `0x0802D100–0x0802D2B3` | New code (436 bytes) in unused flash after the app |
 
-Not changed: the first Source_Capabilities after boot still gets no GoodCRC, because AUTO_CRC is only turned on after it arrives, so the charger has to resend it. PPS is still preferred over fixed 20 V when a charger offers PPS up to 20 V or more. Hard_Reset is still not detected; a Hard_Reset drops VBUS, so the unit reboots anyway.
+Not changed: Hard_Reset is still not detected; a Hard_Reset drops VBUS, so the unit reboots anyway.
 
 Flash it over SWD as in the recovery section. The `.hex` erases only app pages, and calibration at `0x0803D000` is untouched:
 `STM32_Programmer_CLI -c port=SWD mode=UR reset=HWrst -d patched/MDP_P906_v3.01_pdfix.hex -v`
@@ -103,4 +109,17 @@ The bootloader doesn't read the copied file. It parses the raw sector writes to 
 - Data records are at most 16 bytes, with even addresses and lengths.
 
 `tools/blsim.py` confirms that both `_dfu.hex` files give `.rdy` with the correct flash contents whether parsing starts at the beginning or 1–8 sectors in. The original `.hex` fails when parsing starts 8 sectors in.
+
+## Fan control (v3.01, not modified)
+
+`0x080179F8`, run from the measurement round-robin in the main loop:
+
+- **Sensor:** an NTC on ADC channel 2, converted with a 160-entry lookup table (`0x0802AB54`) to −1…79 °C in 0.5 °C steps. An ADC value outside `0x1DD–0xCF0` (open or shorted NTC) reads as −1 °C.
+- **Fan drive:** TIM4 PWM at 25 kHz, the standard for 4-pin fans. The duty is written to TIM4 CCR2.
+- **Curve:**
+  - below 40 °C: 0 %
+  - from 40 °C: `duty = (T − 39) × 6 %`, so 6 % at 40 °C, 66 % at 50 °C, 100 % from about 55.7 °C
+  - no hysteresis, so near 40 °C it switches between 0 % and 6 %
+- **Over-temperature:** at ≥ 70 °C, or ≤ 0 °C (which includes a sensor fault and also a genuinely cold room), the output is switched off and an error is shown.
+- **Boot check (`0x080182F0`):** the fan starts at 100 % during hardware init. The tach input (PE2) must show at least 21 high and 21 low samples within 40,000 polls, otherwise `FAN ERROR` is shown until a key is pressed.
 
