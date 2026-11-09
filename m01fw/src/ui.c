@@ -2,8 +2,8 @@
  *
  * Global: A = output on/off.  Knobs: menu (left) and value (right).
  * MAIN    : menu knob moves the digit cursor over set V / set I, value knob
- *           changes that digit (applied live). B presets, C graph, D reset
- *           session counters, E menu.
+ *           changes that digit. B presets, C graph, D reset session counters,
+ *           E menu. With "Apply edits: CONFIRM", changes wait: B apply, C cancel.
  * PRESETS : knobs select a slot, B recall, C save current set values, E back.
  * GRAPH   : value knob = time window (12 s .. 10 min, works on stored history),
  *           menu knob = scroll back, B hold/run, C main, D clear, E menu.
@@ -37,7 +37,7 @@
 #define BAR_H    20
 #define KEYS_Y   214
 #define KEYS_H   (GFX_H - KEYS_Y)
-#define ST_X     288              /* knob legend strip: x 288..319, y 24..~190 */
+#define ST_X     288              /* knob legend strip: x 288..319, boxes level with the knobs */
 #define CW       (ST_X - 4)       /* right edge of page content */
 
 typedef enum { SCR_MAIN, SCR_PRESETS, SCR_GRAPH, SCR_MENU } screen_t;
@@ -61,7 +61,8 @@ static int want_out = -1;         /* -1 none, 0 off, 1 on */
 static uint32_t out_cmd_ms;
 static bool pair_req;
 static int v_tries, i_tries;      /* sends of the current edit */
-static bool verify_set;           /* a set was sent: poll next, only polls report setpoints */
+static bool pend_v, pend_i;       /* confirm mode: edited, waiting for APPLY / CANCEL */
+static bool verify_set;          /* a set was sent: poll next, only polls report setpoints */
 
 /* session counters (since last reset), accumulated while the output is on */
 static uint64_t sess_mAms, sess_mWms;
@@ -113,6 +114,8 @@ void ui_defaults(ui_settings_t *s)
 void ui_init(const ui_settings_t *s, const uint8_t id[4])
 {
     set = *s;
+    if (set.wheel_up_inc > 1) set.wheel_up_inc = 0;   /* erased on pages saved by older firmware */
+    if (set.confirm_set > 1) set.confirm_set = 0;
     memcpy(dev_id, id, 4);
     full = true;
 }
@@ -144,8 +147,8 @@ void ui_status(const mdp_status_t *s, bool cal, uint32_t mV, uint32_t mA, uint32
 
     /* follow the P906's setpoints unless we're editing them */
     if (s->has_set) {
-        if (want_mV < 0 || (!edit_v && now - last_edit_ms > 1500)) want_mV = (int32_t)s->set_mV;
-        if (want_mA < 0 || (!edit_i && now - last_edit_ms > 1500)) want_mA = (int32_t)s->set_mA;
+        if (want_mV < 0 || (!edit_v && !pend_v && now - last_edit_ms > 1500)) want_mV = (int32_t)s->set_mV;
+        if (want_mA < 0 || (!edit_i && !pend_i && now - last_edit_ms > 1500)) want_mA = (int32_t)s->set_mA;
         if (edit_v && (int32_t)s->set_mV == want_mV) edit_v = false;
         if (edit_i && (int32_t)s->set_mA == want_mA) edit_i = false;
     }
@@ -181,12 +184,14 @@ static void edit(int d, uint32_t now)
         want_mV += d * STEP[cursor];
         if (want_mV < 0) want_mV = 0;
         if (want_mV > (int32_t)MDP_MAX_MV) want_mV = MDP_MAX_MV;
-        edit_v = true; v_tries = 0;
+        if (set.confirm_set) { edit_v = false; pend_v = want_mV != (int32_t)st.set_mV; }
+        else { edit_v = true; v_tries = 0; }
     } else {
         want_mA += d * STEP[cursor];
         if (want_mA < 0) want_mA = 0;
         if (want_mA > (int32_t)MDP_MAX_MA) want_mA = MDP_MAX_MA;
-        edit_i = true; i_tries = 0;
+        if (set.confirm_set) { edit_i = false; pend_i = want_mA != (int32_t)st.set_mA; }
+        else { edit_i = true; i_tries = 0; }
     }
     last_edit_ms = now;
 }
@@ -202,7 +207,18 @@ void ui_input(uint8_t keys, int dmenu, int dvalue, uint32_t now)
     switch (scr) {
     case SCR_MAIN:
         if (dmenu) { cursor += dmenu; if (cursor < 0) cursor = 0; if (cursor > 9) cursor = 9; }
-        if (dvalue) edit(dvalue, now);
+        if (dvalue) edit(set.wheel_up_inc ? -dvalue : dvalue, now);   /* +dvalue = rolled down */
+        if (pend_v || pend_i) {                       /* confirm mode: B/C are APPLY/CANCEL */
+            if (keys & 2) {
+                edit_v = pend_v; edit_i = pend_i; v_tries = i_tries = 0;
+                pend_v = pend_i = false;
+                last_edit_ms = now - 1000;            /* send on the next radio slot */
+            } else if (keys & 4) {
+                want_mV = (int32_t)st.set_mV; want_mA = (int32_t)st.set_mA;
+                pend_v = pend_i = false;
+            }
+            break;
+        }
         if (keys & 2) { scr = SCR_PRESETS; full = true; }
         if (keys & 4) { scr = SCR_GRAPH; full = true; }
         if (keys & 8) { reset_session(); show_toast("SESSION COUNTERS RESET", C_DIM, now, 1500); }
@@ -239,12 +255,14 @@ void ui_input(uint8_t keys, int dmenu, int dvalue, uint32_t now)
         break;
     case SCR_MENU: {
         int d = dmenu + dvalue;
-        if (d) { menu_sel += d; if (menu_sel < 0) menu_sel = 0; if (menu_sel > 4) menu_sel = 4; }
+        if (d) { menu_sel += d; if (menu_sel < 0) menu_sel = 0; if (menu_sel > 5) menu_sel = 5; }
         if (keys & 2) {
             if (menu_sel == 0) { set.muted = !set.muted; settings_dirty = true; if (!set.muted) beep(30); }
             if (menu_sel == 1) { set.beep_cc = !set.beep_cc; settings_dirty = true; }
             if (menu_sel == 2) { set.key_click = !set.key_click; settings_dirty = true; }
-            if (menu_sel == 3) pair_req = true;
+            if (menu_sel == 3) { set.wheel_up_inc = !set.wheel_up_inc; settings_dirty = true; }
+            if (menu_sel == 4) { set.confirm_set = !set.confirm_set; settings_dirty = true; }
+            if (menu_sel == 5) pair_req = true;
         }
         if (keys & 16) { scr = menu_from; full = true; }
         break;
@@ -291,7 +309,7 @@ bool ui_take_settings(ui_settings_t *out)
 /* ================= drawing ================= */
 
 /* cached fields: redraw only when the text/colour changes */
-enum { F_LINK, F_IN, F_TEMP, F_V, F_A, F_W, F_BADGE, F_SETV, F_SETI, F_SESS, F_TOAST, F_KEYS, F_MUTE,
+enum { F_LINK, F_IN, F_TEMP, F_V, F_A, F_W, F_BADGE, F_SETV, F_SETI, F_SESS, F_TOAST, F_KEYS, F_MUTE, F_SETL,
        F_LEG, F_GV, F_GA, F_GW, F_SRC, F_N };
 static char cache[F_N][64];
 
@@ -353,17 +371,22 @@ static void draw_keys(const char *const lab[5])
     snprintf(b, sizeof b, "%d%s|%s|%s|%s|%s", on, lab[0], lab[1], lab[2], lab[3], lab[4]);
     if (!changed(F_KEYS, b)) return;
     gfx_fill(0, KEYS_Y, GFX_W, KEYS_H, C_BG);
+    /* label centres line up with the physical A..E buttons (measured on the unit) */
+    static const int KEY_X[5] = { 25, 92, 159, 226, 292 };
     for (int i = 0; i < 5; i++) {
-        int x = i * 64;
+        int x0 = KEY_X[i] - 30, x1 = KEY_X[i] + 30;
+        if (x0 < 0) x0 = 0;
+        if (x1 > GFX_W) x1 = GFX_W;
         uint16_t bg = (i == 0 && on) ? C_OK : C_PANEL;
-        gfx_fill(x + 2, KEYS_Y + 2, 60, KEYS_H - 4, bg);
+        gfx_fill(x0, KEYS_Y + 2, x1 - x0, KEYS_H - 4, bg);
         int w = gfx_text_w(&font_sml, lab[i]);
-        gfx_text(&font_sml, x + 32 - w / 2, KEYS_Y + 5, lab[i], (i == 0 && on) ? C_BG : C_TEXT, bg);
+        gfx_text(&font_sml, KEY_X[i] - w / 2, KEYS_Y + 5, lab[i], (i == 0 && on) ? C_BG : C_TEXT, bg);
     }
 }
 
-/* knob legend on the right edge: two boxes (L = menu knob, R = value knob),
- * each with up to two 4-char lines; optional extra lines below (graph state) */
+/* knob legend on the right edge: each box sits level with its knob (menu knob
+ * upper, value knob lower), with up to two 4-char lines. Optional extra lines
+ * between the boxes show graph state. */
 static void draw_legend(const char *l1, const char *l2, const char *r1, const char *r2,
                         const char *x1, const char *x2, uint16_t xcol)
 {
@@ -372,29 +395,39 @@ static void draw_legend(const char *l1, const char *l2, const char *r1, const ch
     if (!changed(F_LEG, b)) return;
     const char *const lab[2][2] = { { l1, l2 }, { r1, r2 } };
     for (int k = 0; k < 2; k++) {
-        int y = 24 + k * 60;
-        gfx_fill(ST_X, y, GFX_W - ST_X, 56, C_PANEL);
-        gfx_fill(ST_X, y, GFX_W - ST_X, 14, C_LINE);
-        gfx_text(&font_sml, ST_X + 12, y - 1, k ? "R" : "L", C_DIM, C_LINE);
+        int y = k ? 168 : 46;          /* centres at y 68 and 190; the value knob is
+                                          level with y ~207 but the key row starts at 214 */
+        gfx_fill(ST_X, y, GFX_W - ST_X, 44, C_PANEL);
         for (int j = 0; j < 2; j++) {
-            int w = gfx_text_w(&font_sml, lab[k][j]);
-            gfx_text(&font_sml, ST_X + 16 - w / 2, y + 18 + j * 17, lab[k][j], C_TEXT, C_PANEL);
+            const char *t = lab[k][j];
+            int ty = y + 5 + j * 17;
+            if (*t == '\x01' || *t == '\x02') {        /* roll-direction arrow, then text */
+                bool up = *t == '\x01';
+                for (int i = 0; i < 6; i++) {
+                    int r = up ? i : 5 - i;
+                    gfx_fill(ST_X + 9 - r, ty + 5 + i, 1 + 2 * r, 1, C_DIM);
+                }
+                gfx_text(&font_sml, ST_X + 21, ty, t + 1, C_TEXT, C_PANEL);
+                continue;
+            }
+            int w = gfx_text_w(&font_sml, t);
+            gfx_text(&font_sml, ST_X + 16 - w / 2, ty, t, C_TEXT, C_PANEL);
         }
     }
-    if (!*x1 && !*x2) return;          /* main page: the session line runs full width below */
-    gfx_field(&font_sml, ST_X, 146, 4, x1, xcol, C_BG);
-    gfx_field(&font_sml, ST_X, 164, 4, x2, xcol, C_BG);
+    if (!*x1 && !*x2) return;
+    gfx_field(&font_sml, ST_X, 110, 4, x1, xcol, C_BG);
+    gfx_field(&font_sml, ST_X, 128, 4, x2, xcol, C_BG);
 }
 
 static void draw_toast(uint32_t now)
 {
     const char *s = now < toast_until ? toast : "";
     if (!changed(F_TOAST, s)) return;
-    gfx_fill(0, 186, GFX_W, 24, C_BG);
+    gfx_fill(0, 186, CW, 24, C_BG);
     if (*s) {
         int w = gfx_text_w(&font_sml, s);
-        gfx_fill(GFX_W / 2 - w / 2 - 8, 188, w + 16, 20, toast_col);
-        gfx_text(&font_sml, GFX_W / 2 - w / 2, 190, s, C_BG, toast_col);
+        gfx_fill(CW / 2 - w / 2 - 8, 188, w + 16, 20, toast_col);
+        gfx_text(&font_sml, CW / 2 - w / 2, 190, s, C_BG, toast_col);
     }
 }
 
@@ -457,8 +490,11 @@ static void draw_main(uint32_t now)
         gfx_text(&font_med, CW - font_med.w, 98, "W", wc, C_BG);
     }
 
-    draw_set(F_SETV, 40, 136, want_mV, edit_v, cursor < 5 ? cursor : -1, C_VOLT);
-    draw_set(F_SETI, 176, 136, want_mA, edit_i, cursor >= 5 ? cursor - 5 : -1, C_AMP);
+    draw_set(F_SETV, 40, 136, want_mV, edit_v || pend_v, cursor < 5 ? cursor : -1, C_VOLT);
+    draw_set(F_SETI, 176, 136, want_mA, edit_i || pend_i, cursor >= 5 ? cursor - 5 : -1, C_AMP);
+    bool pending = pend_v || pend_i;
+    if (changed(F_SETL, pending ? "NEW" : "SET"))
+        gfx_field(&font_sml, 8, 140, 3, pending ? "NEW" : "SET", pending ? C_BAD : C_DIM, C_BG);
 
     /* session line */
     uint32_t s = sess_on_ms / 1000;
@@ -466,18 +502,24 @@ static void draw_main(uint32_t now)
     uint32_t mWh = (uint32_t)(sess_mWms / 3600000u);
     char pk[12];
     milli(pk, sizeof pk, sess_peak_mA);
-    snprintf(b, sizeof b, "%02lu:%02lu:%02lu %5lu.%lumAh %5lumWh pk%sA",
-             (unsigned long)(s / 3600), (unsigned long)(s / 60 % 60), (unsigned long)(s % 60),
-             (unsigned long)(mAh10 / 10), (unsigned long)(mAh10 % 10), (unsigned long)mWh, pk);
-    if (changed(F_SESS, b)) gfx_field(&font_sml, 0, 166, 40, b, C_DIM, C_BG);
+    /* 36 cells, ending before the value-knob legend; switches to Ah / Wh when large */
+    char q[12], e[12];
+    if (mAh10 < 100000) snprintf(q, sizeof q, "%4lu.%lumAh", (unsigned long)(mAh10 / 10), (unsigned long)(mAh10 % 10));
+    else snprintf(q, sizeof q, "%5lu.%luAh", (unsigned long)(mAh10 / 10000), (unsigned long)(mAh10 / 1000 % 10));
+    if (mWh < 10000) snprintf(e, sizeof e, "%4lumWh", (unsigned long)mWh);
+    else snprintf(e, sizeof e, "%3lu.%luWh", (unsigned long)(mWh / 1000), (unsigned long)(mWh / 100 % 10));
+    snprintf(b, sizeof b, "%02lu:%02lu:%02lu %s %s pk%sA",
+             (unsigned long)(s / 3600), (unsigned long)(s / 60 % 60), (unsigned long)(s % 60), q, e, pk);
+    if (changed(F_SESS, b)) gfx_field(&font_sml, 0, 166, 36, b, C_DIM, C_BG);
 
-    draw_legend("MOVE", "DGT", "ADJ", "VAL", "", "", C_DIM);
+    /* value wheel: what rolling up (top line) and down (bottom line) does to the digit */
+    draw_legend("MOVE", "DGT", set.wheel_up_inc ? "\x01+" : "\x01-", set.wheel_up_inc ? "\x02-" : "\x02+", "", "", C_DIM);
     draw_toast(now);
     /* input source, in the toast strip while no toast is up. The P906 can't
      * sense the barrel jack: "no PD source" is all it knows. */
     b[0] = 0;
     if (have_pd && now >= toast_until) {
-        if (!pd.pdos) snprintf(b, sizeof b, "No USB-PD: barrel jack or non-PD USB");
+        if (!pd.pdos) snprintf(b, sizeof b, "No PD: barrel jack or non-PD USB");
         else if (!pd.sent || pd.txq) snprintf(b, sizeof b, "USB-C PD: negotiating...");
         else {
             int n = snprintf(b, sizeof b, "USB-C %s %u.%uV %u.%02uA", pd.type == 2 ? "PPS" : "PD",
@@ -486,11 +528,12 @@ static void draw_main(uint32_t now)
         }
     }
     if (changed(F_SRC, b)) {
-        if (b[0]) gfx_field(&font_sml, 8, 190, 38, b, C_DIM, C_BG);
-        else if (now >= toast_until) gfx_fill(0, 186, GFX_W, 24, C_BG);
+        if (b[0]) gfx_field(&font_sml, 8, 190, 34, b, C_DIM, C_BG);
+        else if (now >= toast_until) gfx_fill(0, 186, CW, 24, C_BG);
     }
     static const char *const lab[5] = { "OUTPUT", "PRESETS", "GRAPH", "RESET", "MENU" };
-    draw_keys(lab);
+    static const char *const lab_pend[5] = { "OUTPUT", "APPLY", "CANCEL", "", "" };
+    draw_keys(pending ? lab_pend : lab);
 }
 
 static void draw_presets(uint32_t now)
@@ -535,19 +578,19 @@ static void draw_menu(uint32_t now)
     static int last_sel = -1;
     static ui_settings_t last;
     if (full || last_sel != menu_sel || memcmp(&last, &set, sizeof set) != 0) {
-        const char *items[5];
-        char i0[32], i1[32], i2[32], i4[40];
-        snprintf(i0, sizeof i0, "Sound          %s", set.muted ? "MUTED" : "ON");
-        snprintf(i1, sizeof i1, "Beep on CC     %s", set.beep_cc ? "ON" : "OFF");
-        snprintf(i2, sizeof i2, "Key click      %s", set.key_click ? "ON" : "OFF");
-        snprintf(i4, sizeof i4, "P906 ID %02X%02X%02X%02X", dev_id[0], dev_id[1], dev_id[2], dev_id[3]);
-        items[0] = i0; items[1] = i1; items[2] = i2; items[3] = "Pair with P906..."; items[4] = i4;
-        for (int i = 0; i < 5; i++) {
+        char it[6][32];
+        snprintf(it[0], sizeof it[0], "Sound          %s", set.muted ? "MUTED" : "ON");
+        snprintf(it[1], sizeof it[1], "Beep on CC     %s", set.beep_cc ? "ON" : "OFF");
+        snprintf(it[2], sizeof it[2], "Key click      %s", set.key_click ? "ON" : "OFF");
+        snprintf(it[3], sizeof it[3], "Wheel up       %s", set.wheel_up_inc ? "+" : "-");
+        snprintf(it[4], sizeof it[4], "Apply edits  %7s", set.confirm_set ? "CONFIRM" : "LIVE");
+        snprintf(it[5], sizeof it[5], "Pair (ID %02X%02X%02X%02X)", dev_id[0], dev_id[1], dev_id[2], dev_id[3]);
+        for (int i = 0; i < 6; i++) {
             bool sel = i == menu_sel;
             uint16_t bg = sel ? C_SEL : C_BG;
-            int y = BAR_H + 6 + i * 30;
-            gfx_fill(4, y, CW - 4, 28, bg);
-            gfx_text(&font_med, 14, y + 3, items[i], i == 4 ? C_DIM : C_TEXT, bg);
+            int y = BAR_H + 4 + i * 27;
+            gfx_fill(4, y, CW - 4, 26, bg);
+            gfx_text(&font_med, 14, y + 2, it[i], C_TEXT, bg);
         }
         last_sel = menu_sel;
         last = set;
@@ -640,7 +683,7 @@ static void draw_graph(uint32_t now)
         snprintf(t0, sizeof t0, "-%lus", (unsigned long)t_start);
         snprintf(t1, sizeof t1, "-%lus", (unsigned long)t_mid);
         if (t_end) snprintf(t2, sizeof t2, "-%lus", (unsigned long)t_end); else strcpy(t2, "now");
-        gfx_fill(G_X0 - 4, G_Y1 + 3, GFX_W - G_X0 + 4, 16, C_BG);
+        gfx_fill(G_X0 - 4, G_Y1 + 3, CW - G_X0 + 4, 16, C_BG);
         gfx_text(&font_sml, G_X0, G_Y1 + 3, t0, C_DIM, C_BG);
         gfx_text(&font_sml, (G_X0 + G_X1) / 2 - gfx_text_w(&font_sml, t1) / 2, G_Y1 + 3, t1, C_DIM, C_BG);
         gfx_text(&font_sml, G_X1 - gfx_text_w(&font_sml, t2), G_Y1 + 3, t2, C_DIM, C_BG);
