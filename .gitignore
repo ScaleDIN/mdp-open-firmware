@@ -2,3 +2,10 @@ MDPUpperV1.2.zip
 SetupSTM32CubeProgrammer_win64.zip
 __pycache__/
 *.pyc
+
+# Miniware firmware and unit dumps: kept locally, not redistributed
+MDP_M01_v2.03.zip
+MDP_P906_v3.01.zip
+dump/
+backup/MDP_P906_v1.33.bin
+patched/MDP_P906_*
