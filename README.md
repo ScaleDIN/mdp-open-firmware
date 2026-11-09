@@ -83,9 +83,12 @@ Smaller issues: the FUSB302 never retries a transmission (`Control3 = 0x06`). Th
 | `0x0801EC7E` | Receive dispatcher hooked to new code. It answers **Soft_Reset** (Accept, reset MessageID, renegotiate) and **Get_Sink_Cap** (5 V 3 A + 20 V 5 A). It sends **Reject** for swaps. For Get_Source_Cap, Data_Reset, PD 3 requests and VDM requests it sends **Not_Supported** (on PD 2.0 sources: Reject, or nothing for unknown and VDM messages). After **Wait** it retries the same request after ~150 ms. After **Reject** it clears the stuck "request pending" flag. Everything else goes to the original handler. |
 | `0x08021966` | FUSB302 EXTI hooked: the Request is sent straight from the interrupt about 1 ms after Source_Capabilities, and `InterruptA`/`InterruptB` are cleared |
 | `0x0801EE94` | The main-loop PD tick runs with EXTI15_10 (IRQ40) masked, so the interrupt can't break a bit-banged I2C transfer |
+| `0x08021A42`, `0x08021A80` | FUSB302 `Switches1`: AUTO_CRC on from init, so the charger's first Source_Capabilities gets a GoodCRC (stock turned it on only after the first offer, forcing a resend) |
+| `0x0801EC2E` | The first Source_Capabilities is used straight away (stock ignored it in state 0) |
+| `0x0801ECD0` | First request is 20 V instead of 5 V then 20 V, one voltage change instead of two |
 | `0x0802D100–0x0802D2B3` | New code (436 bytes) in unused flash after the app |
 
-Not changed: the first Source_Capabilities after boot still gets no GoodCRC, because AUTO_CRC is only turned on after it arrives, so the charger has to resend it. PPS is still preferred over fixed 20 V when a charger offers PPS up to 20 V or more. Hard_Reset is still not detected; a Hard_Reset drops VBUS, so the unit reboots anyway.
+Not changed: PPS is still preferred over fixed 20 V when a charger offers PPS up to 20 V or more. Hard_Reset is still not detected; a Hard_Reset drops VBUS, so the unit reboots anyway.
 
 Flash it over SWD as in the recovery section. The `.hex` erases only app pages, and calibration at `0x0803D000` is untouched:
 `STM32_Programmer_CLI -c port=SWD mode=UR reset=HWrst -d patched/MDP_P906_v3.01_pdfix.hex -v`

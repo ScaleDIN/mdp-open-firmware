@@ -286,6 +286,11 @@ PATCHES = [
     (0x0801EC7E, 'fff79fff', thumb_bl(0x0801EC7E, L['disp']).hex(), 'rx dispatcher -> cave'),
     (0x08021966, 'fdf77bb9', thumb_bl(0x08021966, L['isr'], link=False).hex(), 'EXTI body -> cave'),
     (0x0801EE94, 'c9ed0108', (L['tick'] | 1).to_bytes(4, 'little').hex(), 'PD tick pointer -> cave'),
+    # faster negotiation
+    (0x08021A42, '2221', '2621', 'Switches1 CC2: AUTO_CRC on from init (was after 1st caps)'),
+    (0x08021A80, '2121', '2521', 'Switches1 CC1: AUTO_CRC on from init'),
+    (0x0801EC2E, '04d0', '00bf', 'accept the first Source_Caps (state 0 -> 2)'),
+    (0x0801ECD0, '41f28830', '44f62060', 'first request 20 V instead of 5 V'),
 ]
 
 def main(src, dst):
@@ -312,8 +317,8 @@ def main(src, dst):
         f.write(('\r\n'.join(lines) + '\r\n').encode())
     md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
     names = {v: k for k, v in L.items()}
-    for addr, *_ in PATCHES[:4]:
-        b = bytes(ih[addr + i] for i in range(4))
+    for addr, old, *_ in PATCHES:
+        b = bytes(ih[addr + i] for i in range(max(4, len(old) // 2)))
         print('  ', *(f'{i.address:#x}: {i.mnemonic} {i.op_str}' for i in md.disasm(b, addr, count=1)))
     if '-v' in sys.argv:
         for i in md.disasm(code, CAVE):
