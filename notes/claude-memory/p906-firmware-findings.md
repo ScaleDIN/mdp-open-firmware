@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: f2752340-1e00-4e4e-8977-598ba3c7fb12
-  modified: 2026-11-09T12:58:02.799Z
+  modified: 2026-11-09T14:04:42.163Z
 ---
 
 Findings from analysing the P906 bootloader dump and v3.01 firmware (2026-11):
@@ -13,6 +13,11 @@ Findings from analysing the P906 bootloader dump and v3.01 firmware (2026-11):
 - USB-PD (v3.01): parses fixed/PPS/EPR(AVS) offers, requests 5 V then highest ≤ 20 V; enters EPR mode but still requests 20 V (0x0801ED92 `movw r0,#0x4e20`). Input current limiter = negotiated current; >3 A needs a 5 A e-marked cable. User confirmed MAX 5.00 A with a strong charger + good cable.
 - "Current Limit Mode" (Normal/Unlimit) only toggles GPIO PE5; "Input Current Limit" sets a DAC-driven hardware input limiter (setting at RAM 0x200053F4, mA).
 - A 28 V EPR patch was built (patched/MDP_P906_v3.01_pd28v.hex, 3 bytes changed) but NOT flashed: the USB-C input switch is an AON7409 (−30 V VDS, ±25 V VGS), too little margin at 28 V. K34 diode = 40 V Schottky, fine.
+
+- DFU not enumerating on the user's AMD/USB4 laptop: bootloader and app have identical USB descriptors and both use USB interrupts; clock is HSE×9 in both. Difference: the bootloader never configures the FUSB302 (app bit-bangs I2C to it). At reset the FUSB302 presents Rd on both CC pins = USB-C "debug accessory", which strict USB-C hosts mishandle. That hypothesis was tested on 2026-11-09: DFU still failed on what was probably a USB-A port, so it's likely wrong. Untested remaining suspect: insufficient 3.3 V rail in DFU when powered from the laptop port. The user chose to just use another PC for DFU updates. Never suggest barrel jack + USB-C together (the manual forbids powering both).
+
+- Charger-compat patch built 2026-11-09: patched/MDP_P906_v3.01_pdfix.hex from tools/pdfix.py (CC fix, AUTO_RETRY, protocol replies, request sent from the ISR; cave at 0x0802D100). NOT yet flashed or tested on hardware.
+- Charger compatibility analysis: FUSB302 driver at 0x0802196C bit-bangs I2C. (1) Attach detect at 0x080219F8 `cmp r0,#2` requires BC_LVL≥2, so Rp ≥1.5 A; Default-USB Rp sources are never attached ("fusb3022 CC1 or CC2 error"), 3 tries at boot only. 1-byte fix: #2→#1. (2) Rx dispatcher 0x0801EBC0 only handles Accept, PS_RDY, Source_Caps, EPR_Mode, EPR_Source_Caps. Soft_Reset, Get_Sink_Cap, VDMs, Reject and Wait are ignored, so strict sources go to Hard Reset loops. Fixing that needs a code cave after 0x0802D0E8. (3) AUTO_CRC is off until the first Source_Caps arrives (Switches1=0x21/0x22, SPECREV=2.0), so the first caps are never acknowledged. (4) The Request is sent from the main loop (4 ms PD tick), so it may miss tSenderResponse. (5) PPS is preferred over fixed 20 V when the charger offers PPS up to ≥20 V. Control-message builder 0x0801E258 leaves the spec-revision bits at 0.
 
 **Why:** avoids redoing the reverse engineering and re-proposing the unsafe 28 V patch.
 **How to apply:** treat 20 V × 5 A (100 W) as the USB-C ceiling for this board; for more power use the 30 V barrel jack. Related: [[p906-recovery]].
