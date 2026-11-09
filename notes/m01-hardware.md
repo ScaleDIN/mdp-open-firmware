@@ -68,6 +68,14 @@ From mdp_commander (to be cross-checked against both firmwares):
 - Numbers are packed BCD (`12.345` → `01 23 45`).
 - Pairing info is in `RX_ADDR.TXT` on the M01 drive: `Addr1=b1:61:a:29:21`, channel 16.
 
+Verified with our firmware (2026-11-09):
+- Both stock firmwares use the same radio registers: EN_AA=1, EN_RXADDR=1, SETUP_RETR=0x1A, RF_SETUP=0x0F, CONFIG 0x0E (TX) / 0x0F (RX), RX_PW_P0=32. SETUP_AW stays at its default (5 bytes).
+- **P906 pairing mode:** in the P906 menu, open page 2/6 "TX and RX Addr" and start "Match RX Addr..". It then listens on channel 78 at FF FF FF FF FF.
+- The M01 sends type 5 `'M'` and the P906 replies with its 4-byte ID (this unit: `0B 3D C1 C1`). The M01 then sends type 6 `addr[5] (register order) + channel`, and the P906 replies type 6 `"OK" 02`. Afterwards it answers on the new address immediately, with the address bytes in the same order as sent.
+- Stock M01 v1.34 stores the ID at 0x0803C000 as one byte per u16 (`0b00 3d00 c100 c100`).
+- Our firmware saves `{magic 'M0LC', addr[5], ch, id[4]}` at 0x08040000.
+- Status poll = type 7 with `id[4], slot 0, blink 1`. The reply is 0x1C bytes: err, lock, temp BCD (35.5 °C), state, input V BCD (20.056 V), input I BCD (0.110 A), 4 raw ADC V/I pairs, set V BCD, set I BCD.
+
 ## Plan for replacement firmware
 1. ~~Back up the full flash over SWD~~ (done, see above). Rig: USB-A socket, 4-pin row: GND→GND, D+→SWDIO, D−→SWCLK, VBUS→5V.
 2. Toolchain: arm-none-eabi-gcc + CMake + OpenOCD/CubeProgrammer. Link at 0x08008000, VTOR = 0x08008000, and keep SWD enabled.

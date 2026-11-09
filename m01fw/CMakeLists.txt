@@ -13,6 +13,9 @@ add_executable(m01fw.elf
   src/input.c
   src/lcd.c
   src/main.c
+  src/radio.c
+  src/mdp.c
+  src/config.c
 )
 target_include_directories(m01fw.elf PRIVATE src lib lib/cmsis)
 target_compile_definitions(m01fw.elf PRIVATE STM32F103xE)

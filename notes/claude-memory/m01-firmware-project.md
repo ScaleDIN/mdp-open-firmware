@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: a76b5cbf-6224-4158-99a9-160621013d7c
-  modified: 2026-11-09T13:59:52.199Z
+  modified: 2026-11-09T14:30:00.179Z
 ---
 
 On 2026-11-09 the user chose to write **new M01 firmware from scratch**. They dislike everything about the stock UI: navigation, main-screen layout, look, and missing features. A PC control panel or binary patching were rejected.
@@ -20,6 +20,11 @@ Firmware lives in `m01fw/` (bare-metal C, CMSIS, CMake+Ninja, Arm GNU Toolchain 
 - The bootloader only jumps if `(SP & 0x2FFF0000) == 0x20000000`, so `_estack` must be < 0x20010000.
 - Flash with CubeProgrammer `mode=NORMAL reset=SWrst -d build/m01fw.hex -v -rst`.
 - Read the `dbg` struct in RAM with `-r32` in HOTPLUG mode to check state without seeing the screen.
+
+Status 2026-11-09, branch `m01-firmware`:
+- Milestone 1 (screen, keys, encoders) and milestone 2 (radio, pairing, read-only status) are done.
+- The P906 was re-paired by our firmware: ID 0B3DC1C1, address b1:61:0a:29:21, channel 16. The link is saved at 0x08040000.
+- Next: type 9 calibration (it also sets the LED colour, so preserve the stock-saved colour), then control (set V/I, output), then the UI.
 
 **Requirement (user, 2026-11-09): preserve the pairing workflow.** The new firmware must pair with the P906 the same way stock does: Auto Match via radio type 5/6 packets on channel 78, and the address/channel stored in `RX_ADDR.TXT`, multi-device Addr1..N. Already-paired units must keep working without re-pairing. The new firmware must also be able to **re-pair an unpaired P906** by itself, reachable from the UI and from a key held at boot. Fallbacks: restore stock firmware from `dump/m01_flash_1.bin`, or pair with mdp_commander.
 
