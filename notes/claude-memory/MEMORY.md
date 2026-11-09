@@ -1,2 +1,3 @@
 - [P906 recovery](p906-recovery.md) — DFU-only brick fixed via ST-Link; SWD needs 3.3 V fed via W25Q64 VCC; flash layout and backups
 - [P906 firmware findings](p906-firmware-findings.md) — DFU .bin bug, USB-PD 20 V policy, current-limit settings, 28 V patch rejected (AON7409)
+- [M01 firmware project](m01-firmware-project.md) — rewriting M01 firmware from scratch; hw map in notes/m01-hardware.md, keep bootloader, SWD backup first

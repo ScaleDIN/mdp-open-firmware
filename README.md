@@ -15,7 +15,9 @@ Notes, backups and tools from recovering a Miniware **MDP-P906** (board `P906-DI
 | `patched/MDP_P906_v3.01_pd28v.hex` | Experimental 28 V USB-PD patch. **Not flashed and not recommended** (see below). |
 | `tools/` | Python analysis scripts (capstone-based disassembly, dump analysis, hex patch + verify) |
 | `notes/claude-memory/` | Condensed findings kept as project memory |
-| `photos/` | Board photos (MCU area, USB-C input area) |
+| `photos/` | Board photos (P906 MCU area, USB-C input area, P906 DC/DC board, M01 mainboard V1.3) |
+| `dump/m01_flash_1.bin`, `dump/m01_flash_2.bin` | Full 512 KB flash of the **MDP-M01** (GD32F303VET6) read over SWD: bootloader DFU V3.65D, firmware V1.34.098, settings, logo. Two identical reads. |
+| `m01fw/` | Open replacement firmware for the M01 (work in progress). Hardware map and findings are in `notes/m01-hardware.md`. |
 
 Not included: the MDP PC software (`MDPUpperV1.2.zip`, 135 MB) and the STM32CubeProgrammer installer. Both are too large for GitHub and come from their vendors.
 
