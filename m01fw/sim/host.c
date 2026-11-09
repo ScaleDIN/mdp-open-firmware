@@ -199,5 +199,27 @@ int main(void)
     RUN(20, sends, asked);
     printf("confirm test: sends=%d asked=%lu set=%lu\n", sends, (unsigned long)asked, (unsigned long)st.set_mV);
     if (sends != 1 || asked >= 5000 || st.set_mV != asked) { printf("FAIL: apply\n"); return 1; }
+
+    /* output on/off: confirmed by the next poll; gives up after 5 sends */
+    for (int obey = 1; obey >= 0; obey--) {
+        int out_sends = 0;
+        st.state = 2;
+        ui_status(&st, true, 5000, 200, now);
+        ui_input(1, 0, 0, now);            /* A: switch off */
+        for (int i = 0; i < 60; i++) {
+            ui_cmd_t c;
+            now += 100;
+            if (ui_next_cmd(&c, now)) {
+                if (c.kind != UC_OUT_OFF) { printf("FAIL: wrong command\n"); return 1; }
+                out_sends++;
+                ui_cmd_done(&c, true, now);
+                if (obey) st.state = 0;
+            } else {
+                ui_status(&st, true, 5000, 200, now);
+            }
+        }
+        printf("output test obey=%d: sends=%d\n", obey, out_sends);
+        if (out_sends != (obey ? 1 : 5)) { printf("FAIL: output\n"); return 1; }
+    }
     return 0;
 }
